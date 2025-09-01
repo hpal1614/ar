@@ -9,7 +9,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Initialize MindAR with better camera settings
   const mindarThree = new MindARThree({
     container: document.querySelector("#ar-container"),
-    imageTargetSrc: "./assets/targets/postcard.mind",
+    imageTargetSrc: "./assets/target/postcard.mind",
     uiScanning: false, // We'll handle our own scanning UI
     uiLoading: true,   // Show loading indicator
     maxTrack: 1        // Only track one image for better stability
@@ -66,8 +66,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       console.log('Loading Burj Khalifa model...');
       
-      // Load the actual model from the targets folder
-      const gltf = await loader.loadAsync('./assets/targets/burj_khalifa.glb');
+      // Load the actual model from the target folder
+      const gltf = await loader.loadAsync('./assets/target/burj_khalifa.glb');
       const model = gltf.scene;
       
       // Create a group to hold the model
@@ -155,7 +155,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       sphere.position.y = 1.0; // At the top of the cone
       fallbackGroup.add(sphere);
       
-      console.log('Using fallback Burj Khalifa model - check if burj_khalifa.glb exists in assets/targets/');
+      console.log('Using fallback Burj Khalifa model - check if burj_khalifa.glb exists in assets/target/');
       return fallbackGroup;
     }
   };
@@ -315,10 +315,31 @@ document.addEventListener("DOMContentLoaded", async () => {
     labelObjects.push(labelObj);
   }
   
-  // ADDED: Load and add Burj Khalifa model to the center of the postcard
+  // ADDED: Load and add Burj Khalifa model with better loading feedback
   let burjModel = null;
+  
+  // Show loading indicator for the model
+  const modelLoadingDiv = document.createElement("div");
+  modelLoadingDiv.style.position = "absolute";
+  modelLoadingDiv.style.top = "50%";
+  modelLoadingDiv.style.left = "50%";
+  modelLoadingDiv.style.transform = "translate(-50%, -50%)";
+  modelLoadingDiv.style.backgroundColor = "rgba(0, 0, 0, 0.8)";
+  modelLoadingDiv.style.color = "white";
+  modelLoadingDiv.style.padding = "15px 25px";
+  modelLoadingDiv.style.borderRadius = "8px";
+  modelLoadingDiv.style.zIndex = "1500";
+  modelLoadingDiv.style.fontFamily = "'Segoe UI', Arial, sans-serif";
+  modelLoadingDiv.innerHTML = "Loading 3D Model...";
+  arContainer.appendChild(modelLoadingDiv);
+  
   try {
     burjModel = await loadBurjKhalifaModel();
+    
+    // Remove loading indicator
+    if (modelLoadingDiv.parentNode) {
+      modelLoadingDiv.parentNode.removeChild(modelLoadingDiv);
+    }
     
     // Position at exact center, slightly above postcard for better visibility
     burjModel.position.set(0, 0, 0.05); // Small Z offset so it's clearly above the postcard
@@ -338,6 +359,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.log('Burj Khalifa model added - will always point toward sky');
   } catch (error) {
     console.error('Failed to load Burj Khalifa model:', error);
+    
+    // Remove loading indicator and show error
+    if (modelLoadingDiv.parentNode) {
+      modelLoadingDiv.innerHTML = "Failed to load 3D model";
+      modelLoadingDiv.style.backgroundColor = "rgba(200, 50, 50, 0.8)";
+      setTimeout(() => {
+        if (modelLoadingDiv.parentNode) {
+          modelLoadingDiv.parentNode.removeChild(modelLoadingDiv);
+        }
+      }, 3000);
+    }
   }
   
   // IMPROVED: Add window resize handler with debouncing
@@ -426,12 +458,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   };
   
-  // Get container and set up simplified event listeners
+  // Get container and set up improved event listeners
   const arContainer = document.querySelector("#ar-container");
   
-  // Add both touch and click events (browser will use appropriate one)
-  arContainer.addEventListener("click", handleClick, { passive: false });
-  arContainer.addEventListener("touchend", handleClick, { passive: false });
+  // Improved touch/click handling to prevent conflicts
+  let touchHandled = false;
+  
+  const handleTouch = (event) => {
+    touchHandled = true;
+    handleClick(event);
+    // Reset flag after a short delay
+    setTimeout(() => { touchHandled = false; }, 100);
+  };
+  
+  const handleMouse = (event) => {
+    // Only handle mouse events if touch wasn't used recently
+    if (!touchHandled) {
+      handleClick(event);
+    }
+  };
+  
+  // Add event listeners with proper separation
+  arContainer.addEventListener("touchend", handleTouch, { passive: false });
+  arContainer.addEventListener("click", handleMouse, { passive: false });
+  
+  // Prevent context menu on long press
+  arContainer.addEventListener("contextmenu", (e) => e.preventDefault());
   
   // Create debug panel if needed
   if (DEBUG_MODE) {
@@ -725,22 +777,27 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       });
       
-      // FIXED: Building rotation - clean and stable
+      // IMPROVED: Stable building rotation with better performance
       if (burjModel && burjModel.userData.animation) {
         // STEP 1: Keep building anchored to postcard center
         if (burjModel.userData.originalPosition) {
           burjModel.position.copy(burjModel.userData.originalPosition);
         }
         
-        // STEP 2: Set building to point up from postcard (perpendicular to postcard surface)
-        // This makes the building stand upright relative to the postcard
-        burjModel.rotation.x = Math.PI / 2; // Point up from postcard surface
-        burjModel.rotation.z = 0; // No tilt
-        
-        // STEP 3: ONLY spin around the building's local up axis (Y-axis after the X rotation)
-        // This creates clean spinning without wobbling
+        // STEP 2: Use quaternion rotation for more stable animation
+        // This prevents gimbal lock and provides smoother rotation
         burjModel.userData.baseRotation += burjModel.userData.animation.rotationSpeed;
-        burjModel.rotation.y = burjModel.userData.baseRotation;
+        
+        // Create rotation quaternion for Y-axis rotation
+        const rotationQuaternion = new THREE.Quaternion();
+        rotationQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), burjModel.userData.baseRotation);
+        
+        // Apply base orientation (pointing up from postcard) then rotation
+        const baseQuaternion = new THREE.Quaternion();
+        baseQuaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+        
+        // Combine rotations
+        burjModel.quaternion.multiplyQuaternions(baseQuaternion, rotationQuaternion);
       }
       
       // Render the scene
