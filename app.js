@@ -1,6 +1,6 @@
-import { MindARThree } from "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js";
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.module.js";
-import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.157.0/examples/jsm/loaders/GLTFLoader.js";
+import { MindARThree } from "mindar";
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 document.addEventListener("DOMContentLoaded", async () => {
   // Create a scanning UI that appears before AR starts
@@ -9,7 +9,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Initialize MindAR with better camera settings
   const mindarThree = new MindARThree({
     container: document.querySelector("#ar-container"),
-    imageTargetSrc: "./assets/targets/postcard.mind",
+    imageTargetSrc: "./assets/target/postcard.mind",
     uiScanning: false, // We'll handle our own scanning UI
     uiLoading: true,   // Show loading indicator
     maxTrack: 1        // Only track one image for better stability
@@ -24,10 +24,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   const clickableMeshes = [];
   
   // Debug mode for testing - adds a grid to visualize coordinate space
-  const DEBUG_MODE = false; // Set to false in production
+  const DEBUG_MODE = window.location.search.includes('debug=true'); // Enable with ?debug=true in URL
   if (DEBUG_MODE) {
     const gridHelper = new THREE.GridHelper(2, 20);
     anchor.group.add(gridHelper);
+    
+    // Import and initialize debugger
+    import('./debug.js').then(module => {
+      module.initDebugger();
+      module.createPerformanceMonitor();
+    });
   }
   
   // IMPROVED: Anchor points based on normalized postcard coordinates
@@ -63,12 +69,56 @@ document.addEventListener("DOMContentLoaded", async () => {
   const loadBurjKhalifaModel = async () => {
     const loader = new GLTFLoader();
     
+    // Create loading progress indicator
+    const progressBar = document.createElement('div');
+    progressBar.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 200px;
+      height: 20px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 10px;
+      overflow: hidden;
+      z-index: 1000;
+      display: none;
+    `;
+    
+    const progressFill = document.createElement('div');
+    progressFill.style.cssText = `
+      height: 100%;
+      background: #1a73e8;
+      width: 0%;
+      transition: width 0.3s ease;
+    `;
+    
+    progressBar.appendChild(progressFill);
+    document.body.appendChild(progressBar);
+    
     try {
       console.log('Loading Burj Khalifa model...');
+      progressBar.style.display = 'block';
       
-      // Load the actual model from the targets folder
-      const gltf = await loader.loadAsync('./assets/targets/burj_khalifa.glb');
+      // Load the actual model from the target folder with progress tracking
+      const gltf = await new Promise((resolve, reject) => {
+        loader.load(
+          './assets/target/burj_khalifa.glb',
+          (gltf) => resolve(gltf),
+          (progress) => {
+            const percentComplete = (progress.loaded / progress.total) * 100;
+            progressFill.style.width = percentComplete + '%';
+            console.log('Loading progress:', Math.round(percentComplete) + '%');
+          },
+          (error) => reject(error)
+        );
+      });
+      
       const model = gltf.scene;
+      
+      // Hide progress bar after loading
+      progressBar.style.display = 'none';
+      document.body.removeChild(progressBar);
       
       // Create a group to hold the model
       const burjGroup = new THREE.Group();
@@ -155,7 +205,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       sphere.position.y = 1.0; // At the top of the cone
       fallbackGroup.add(sphere);
       
-      console.log('Using fallback Burj Khalifa model - check if burj_khalifa.glb exists in assets/targets/');
+      console.log('Using fallback Burj Khalifa model - check if burj_khalifa.glb exists in assets/target/');
       return fallbackGroup;
     }
   };
